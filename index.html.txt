@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Flappy Superheroes</title>
+    <style>
+        * {
+            user-select: none;
+            touch-action: manipulation;
+        }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: linear-gradient(145deg, #0b3b5f 0%, #1b4f72 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Segoe UI', 'Courier New', monospace;
+        }
+        .game-container {
+            background: #000;
+            padding: 10px;
+            border-radius: 28px;
+            box-shadow: 0 20px 35px rgba(0,0,0,0.4);
+        }
+        canvas {
+            display: block;
+            margin: 0 auto;
+            border-radius: 20px;
+            cursor: pointer;
+        }
+        .hero-selector {
+            text-align: center;
+            margin-top: 20px;
+            color: #ffdd77;
+            text-shadow: 3px 3px 0 #8b5a2b;
+        }
+        .hero-grid {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 15px;
+            margin: 15px auto;
+            max-width: 800px;
+        }
+        .hero-card {
+            background: #1f2a3a;
+            border-radius: 60px;
+            padding: 8px 18px;
+            font-size: 1.3rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: 0.2s;
+            box-shadow: 0 4px 0 #0f1219;
+            color: white;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .hero-card.selected {
+            background: #f5b042;
+            color: #1f2a3a;
+            box-shadow: 0 0 12px #ffdd99;
+            transform: scale(1.02);
+        }
+        button {
+            background: #2ecc71;
+            border: none;
+            font-size: 1.4rem;
+            font-weight: bold;
+            padding: 8px 28px;
+            border-radius: 40px;
+            margin-top: 10px;
+            cursor: pointer;
+            box-shadow: 0 5px 0 #1f8b4c;
+            transition: 0.05s linear;
+            font-family: inherit;
+        }
+        button:active {
+            transform: translateY(3px);
+            box-shadow: 0 2px 0 #1f8b4c;
+        }
+        .score-board {
+            font-size: 2rem;
+            font-weight: bold;
+            background: #000000aa;
+            display: inline-block;
+            padding: 5px 20px;
+            border-radius: 60px;
+            margin-bottom: 12px;
+            backdrop-filter: blur(4px);
+        }
+        footer {
+            text-align: center;
+            color: #bbc;
+            margin-top: 18px;
+            font-size: 0.8rem;
+        }
+        @media (max-width: 600px) {
+            .hero-card { font-size: 0.9rem; padding: 4px 12px; }
+            .score-board { font-size: 1.4rem; }
+        }
+    </style>
+</head>
+<body>
+<div>
+    <div class="hero-selector">
+        <div class="score-board" id="scoreDisplay">⭐ 0</div>
+        <div style="font-size: 1.55rem; margin-bottom: 6px;">✧ CHOOSE YOUR HERO ✧</div>
+        <div class="hero-grid" id="heroGrid"></div>
+        <button id="startBtn">🚀 START FLAPPY MODE 🚀</button>
+    </div>
+    <div class="game-container">
+        <canvas id="gameCanvas" width="500" height="600" style="width:100%; height:auto; max-width:500px; aspect-ratio:500/600;"></canvas>
+    </div>
+    <footer>␣ SPACE / CLICK → FLAP   |   avoid pipes & ground</footer>
+</div>
+
+<script>
+    (function(){
+        // ---------- SUPERHERO SKINS ----------
+        const heroes = [
+            { name: "Spiderman", emoji: "🕷️", color: "#E23636" },
+            { name: "Batman", emoji: "🦇", color: "#2C2F33" },
+            { name: "Superman", emoji: "🦸", color: "#F5D742" },
+            { name: "Green Lantern", emoji: "💚", color: "#2FCC71" },
+            { name: "Wonder Woman", emoji: "👸", color: "#F1C40F" },
+            { name: "Scarlet Witch", emoji: "🔮", color: "#C0392B" },
+            { name: "Captain Marvel", emoji: "✨", color: "#F39C12" },
+            { name: "Catwoman", emoji: "🐱", color: "#5D6D7E" }
+        ];
+        let selectedHero = heroes[0];
+        
+        // canvas elements
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // game state
+        let gameRunning = false;
+        let frame = 0;
+        let score = 0;
+        let bird = { x: 100, y: 250, vy: 0, radius: 16 };
+        let pipes = [];
+        const GRAVITY = 0.3;
+        const JUMP = -5.8;
+        const PIPE_WIDTH = 65;
+        const PIPE_GAP = 135;
+        const PIPE_SPACING = 210;
+        
+        // UI elements
+        const startBtn = document.getElementById('startBtn');
+        const heroGrid = document.getElementById('heroGrid');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        
+        // build hero selector
+        function buildHeroSelector() {
+            heroGrid.innerHTML = '';
+            heroes.forEach(hero => {
+                const card = document.createElement('div');
+                card.className = 'hero-card';
+                if (selectedHero.name === hero.name) card.classList.add('selected');
+                card.innerHTML = `${hero.emoji} ${hero.name}`;
+                card.addEventListener('click', () => {
+                    selectedHero = hero;
+                    document.querySelectorAll('.hero-card').forEach(c => c.classList.remove('selected'));
+                    card.classList.add('selected');
+                    drawIdleScreen(); // preview bird
+                });
+                heroGrid.appendChild(card);
+            });
+        }
+        
+        // draw bird with current skin (emoji)
+        function drawBird(x, y, radius) {
+            // draw circle background with hero color
+            ctx.save();
+            ctx.shadowBlur = 0;
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI*2);
+            ctx.fillStyle = selectedHero.color;
+            ctx.fill();
+            ctx.strokeStyle = '#111';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+            // draw emoji
+            ctx.font = `${radius*1.6}px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", system-ui, sans-serif`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillStyle = "#111";
+            ctx.fillText(selectedHero.emoji, x, y);
+            ctx.restore();
+        }
+        
+        // draw pipes, ground, background
+        function drawBackground() {
+            // sky gradient
+            const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            grad.addColorStop(0, '#55aaff');
+            grad.addColorStop(0.7, '#2299dd');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            // clouds
+            ctx.fillStyle = '#ffffffcc';
+            ctx.beginPath();
+            ctx.ellipse(70 + frame*0.2 % 300, 60, 35, 28, 0, 0, Math.PI*2);
+            ctx.ellipse(400 - frame*0.1 % 400, 120, 45, 32, 0, 0, Math.PI*2);
+            ctx.fill();
+            // ground
+            ctx.fillStyle = '#6b4c3b';
+            ctx.fillRect(0, canvas.height-70, canvas.width, 70);
+            ctx.fillStyle = '#ac8e68';
+            ctx.fillRect(0, canvas.height-75, canvas.width, 8);
+            // ground shadow
+            ctx.fillStyle = '#2c1e12';
+            for(let i=0;i<12;i++) {
+                ctx.fillRect(i*45 + (frame%45), canvas.height-70, 20, 8);
+            }
+        }
+        
+        function drawPipes() {
+            for(let p of pipes) {
+                ctx.fillStyle = '#3b9e3b';
+                ctx.fillRect(p.x, 0, PIPE_WIDTH, p.topHeight);
+                ctx.fillStyle = '#2d7a2d';
+                ctx.fillRect(p.x, p.topHeight-30, PIPE_WIDTH, 30);
+                ctx.fillStyle = '#3b9e3b';
+                ctx.fillRect(p.x, p.topHeight + PIPE_GAP, PIPE_WIDTH, canvas.height - p.topHeight - PIPE_GAP - 70);
+                ctx.fillStyle = '#2d7a2d';
+                ctx.fillRect(p.x, p.topHeight + PIPE_GAP, PIPE_WIDTH, 35);
+                // pipe brim
+                ctx.fillStyle = '#5fad4b';
+                ctx.fillRect(p.x-8, p.topHeight-15, PIPE_WIDTH+16, 20);
+                ctx.fillRect(p.x-8, p.topHeight + PIPE_GAP - 8, PIPE_WIDTH+16, 20);
+            }
+        }
+        
+        function updateGame() {
+            if (!gameRunning) return;
+            // bird physics
+            bird.vy += GRAVITY;
+            bird.y += bird.vy;
+            // ground & ceiling collision
+            if (bird.y + bird.radius >= canvas.height - 70 || bird.y - bird.radius <= 0) {
+                gameOver();
+                return;
+            }
+            // pipe movement & collision
+            for (let i=0; i<pipes.length; i++) {
+                pipes[i].x -= 2.8;
+                // collision detection (hitbox)
+                if (bird.x + bird.radius > pipes[i].x && bird.x - bird.radius < pipes[i].x + PIPE_WIDTH) {
+                    if (bird.y - bird.radius < pipes[i].topHeight || bird.y + bird.radius > pipes[i].topHeight + PIPE_GAP) {
+                        gameOver();
+                        return;
+                    }
+                }
+                // scoring
+                if (!pipes[i].counted && pipes[i].x + PIPE_WIDTH < bird.x - bird.radius) {
+                    pipes[i].counted = true;
+                    score++;
+                    scoreDisplay.innerText = `⭐ ${score}`;
+                }
+            }
+            // remove offscreen pipes
+            pipes = pipes.filter(p => p.x + PIPE_WIDTH > 0);
+            // spawn new pipes
+            if (frame % 110 === 0 && gameRunning) {
+                let topHeight = Math.random() * (canvas.height - PIPE_GAP - 140) + 60;
+                pipes.push({
+                    x: canvas.width,
+                    topHeight: topHeight,
+                    counted: false
+                });
+            }
+            frame++;
+        }
+        
+        function drawGame() {
+            drawBackground();
+            drawPipes();
+            drawBird(bird.x, bird.y, bird.radius);
+            // score on canvas
+            ctx.font = 'bold 28monospace';
+            ctx.fillStyle = '#fff6d0';
+            ctx.shadowBlur = 0;
+            ctx.fillText(`✧ ${score}`, 20, 55);
+            if (!gameRunning && !window.gameOverFlag) {
+                ctx.font = 'bold 26px "Courier New"';
+                ctx.fillStyle = '#fee3b8';
+                ctx.shadowBlur = 0;
+                ctx.fillText("CLICK / SPACE", canvas.width/2-105, canvas.height/2-40);
+                ctx.font = '18px monospace';
+                ctx.fillStyle = '#fbd26a';
+                ctx.fillText("press START", canvas.width/2-48, canvas.height/2+30);
+            } else if (window.gameOverFlag) {
+                ctx.font = 'bold 28px monospace';
+                ctx.fillStyle = '#ffbb88';
+                ctx.fillText("💀 GAME OVER 💀", canvas.width/2-100, canvas.height/2-30);
+                ctx.font = '18px monospace';
+                ctx.fillStyle = '#ddd';
+                ctx.fillText("press RESTART", canvas.width/2-55, canvas.height/2+30);
+            }
+        }
+        
+        function gameLoop() {
+            if (gameRunning) updateGame();
+            drawGame();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        function startGame() {
+            gameRunning = true;
+            window.gameOverFlag = false;
+            score = 0;
+            scoreDisplay.innerText = `⭐ 0`;
+            bird.y = canvas.height/2;
+            bird.vy = -2;
+            pipes = [];
+            frame = 0;
+        }
+        
+        function gameOver() {
+            gameRunning = false;
+            window.gameOverFlag = true;
+        }
+        
+        function flap() {
+            if (!gameRunning) {
+                if (window.gameOverFlag === true) startGame();
+                return;
+            }
+            bird.vy = JUMP;
+        }
+        
+        // idle screen draw
+        function drawIdleScreen() {
+            if (gameRunning) return;
+            drawBackground();
+            drawBird(canvas.width/2, canvas.height/2-30, bird.radius);
+            ctx.font = 'bold 26px monospace';
+            ctx.fillStyle = '#fff3b0';
+            ctx.fillText("⚡ FLAPPY SUPERHEROES ⚡", canvas.width/2-165, 70);
+            ctx.font = '16px monospace';
+            ctx.fillStyle = '#eedd99';
+            ctx.fillText(`selected: ${selectedHero.emoji} ${selectedHero.name}`, canvas.width/2-110, canvas.height-40);
+            // small demo pipes
+            ctx.fillStyle = '#559955';
+            ctx.fillRect(canvas.width-70, 120, 45, 80);
+            ctx.fillRect(canvas.width-70, 120+150, 45, 150);
+        }
+        
+        // events
+        function handleKey(e) {
+            if (e.code === 'Space') {
+                e.preventDefault();
+                flap();
+            }
+        }
+        
+        function handleCanvasClick(e) {
+            e.preventDefault();
+            flap();
+        }
+        
+        // init
+        buildHeroSelector();
+        drawIdleScreen();
+        startBtn.addEventListener('click', () => {
+            startGame();
+        });
+        window.addEventListener('keydown', handleKey);
+        canvas.addEventListener('click', handleCanvasClick);
+        canvas.addEventListener('touchstart', (e) => { e.preventDefault(); flap(); });
+        gameLoop();
+        // redraw idle when hero changes while game not running
+        setInterval(() => {
+            if (!gameRunning) drawIdleScreen();
+        }, 80);
+    })();
+</script>
+</body>
+</html>
